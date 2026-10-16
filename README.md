@@ -58,6 +58,9 @@ python src/sample_data.py
 
 # 4. 运行三分类基线原型（需要已生成 data/sample.csv）
 python src/prototype.py
+
+# 5. 运行自动化测试
+pytest -v
 ```
 
 ### 三分类任务
@@ -71,6 +74,12 @@ python src/prototype.py
 | Closed with monetary relief | 2,622 | 1.37% |
 
 `src/prototype.py` 会依次完成数据清洗（类别筛选、按 Complaint ID 去重、Product 旧命名合并、空值填充）、80/20 分层划分（随机种子 42），并实现两个基线——多数类基线与「Product × Issue 组合查表」基线——输出宏平均 F1、各类 precision/recall/F1 与混淆矩阵做对比。
+
+### 测试
+
+`tests/test_prototype.py` 使用 pytest，共 10 个测试，覆盖类别筛选、去重、Product 归一化、空值填充、划分比例与分层、随机种子可复现性、两个基线的行为（含未见组合回退）、无效输入的报错，以及在 10 行手工数据上与手工计算的逐条核对。
+
+测试数据全部在测试文件内构造，**不依赖 `data/sample.csv`**，因此无需先下载原始数据即可运行。
 
 运行结束后会在 `data/sample.csv` 生成约 20 万行的随机样本，并在终端打印原始总行数、抽样行数、`Company response to consumer` 分布、`Product` 前 10 类分布以及 `Date received` 的时间范围。
 

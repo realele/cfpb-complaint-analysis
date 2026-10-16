@@ -151,6 +151,7 @@ def _normalize_product(series: pd.Series) -> tuple[pd.Series, pd.DataFrame]:
 
     # 统计每条映射命中的行数，生成可打印的映射表
     hit = normalized.ne(series) & mapped.notna()
+    mapping_columns = ["原名称", "归一化后", "影响行数", "合并理由"]
     rows = []
     for name in pd.unique(series[hit].astype(str)):
         target, reason = PRODUCT_NORMALIZATION[name.strip().lower()]
@@ -160,7 +161,12 @@ def _normalize_product(series: pd.Series) -> tuple[pd.Series, pd.DataFrame]:
             "影响行数": int((series.astype(str) == name).sum()),
             "合并理由": reason,
         })
-    mapping = pd.DataFrame(rows).sort_values("影响行数", ascending=False).reset_index(drop=True)
+    # 没有任何旧命名命中时也要返回带列名的空表，否则后续按列名排序会报错
+    mapping = (
+        pd.DataFrame(rows, columns=mapping_columns)
+        .sort_values("影响行数", ascending=False)
+        .reset_index(drop=True)
+    )
     return normalized, mapping
 
 
