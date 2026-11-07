@@ -65,7 +65,7 @@ cfpb-complaint-analysis/
 | `docs/data_dictionary.md` | 数据字典：原始 CSV 全部 16 字段的类型、缺失率、角色与注意事项 |
 | `docs/dataset_card.md` | 数据集卡片：来源、许可、规模、覆盖总体、已知偏差、隐私与用途边界 |
 | `docs/decision_log.md` | 决策日志：阶段一 #1–#8、阶段二 #11–#20 的关键决策与理由 |
-| `docs/groupkfold_notes` | 阶段三预习笔记 —— GroupKFold（按公司分组交叉验证），作者为周恒毅、由赵伟翔代为提交（其 GitHub 账号处于封禁申诉期） |
+| `docs/groupkfold_notes.md` | 阶段三预习笔记 —— GroupKFold（按公司分组交叉验证），作者为周恒毅、由赵伟翔代为提交（其 GitHub 账号处于封禁申诉期） |
 | `docs/verification_zhou.md` | 数据文档校对记录，独立环境复现记录。作者为周恒毅、由赵伟翔代为提交（其 GitHub 账号处于封禁申诉期） |
 
 ## 运行方法
