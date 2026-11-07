@@ -37,6 +37,7 @@ cfpb-complaint-analysis/
 │   ├── train.parquet     # 时间划分：训练集（2011-12 ~ 2023-12-31）
 │   ├── test.parquet      # 时间划分：测试集（2024-01-01 ~ 至今）
 │   ├── split_stats.json  # 由 src/split_temporal.py 生成的划分统计
+│   ├── baseline_temporal_stats.json  # 由 src/baseline_temporal.py 生成的时间划分基线结果
 │   └── cache/            # 全量聚合的 parquet 缓存与临时目录（可随时删除重建）
 ├── notebooks/            # 分析用 Jupyter Notebook
 ├── src/                  # 源代码
@@ -44,8 +45,11 @@ cfpb-complaint-analysis/
 │   ├── aggregate_full.py # 全量聚合（DuckDB 单遍扫描 → data/full_stats.json）
 │   ├── cleaning.py       # 清洗规则的唯一实现（三主类筛选 / 去重 / Product 归一化 / 空值填充）
 │   ├── split_temporal.py # 时间划分（读 parquet 缓存 → data/train.parquet、test.parquet）
+│   ├── baseline_temporal.py # 时间划分基线重跑 + Bootstrap 置信区间（读 train/test.parquet）
+│   ├── eda.py           # 探索性数据分析（6 张图回答 6 个问题，输出到 figures/）
 │   ├── report.py         # 终端表格对齐与数字格式化（供上面两个脚本共用）
 │   └── prototype.py      # 三分类基线原型（清洗 / 划分 / 多数类基线 / 查表基线 / 评估）
+├── figures/              # EDA 图表（PNG，dpi=150）
 ├── tests/                # 测试
 ├── requirements.txt
 └── README.md
@@ -77,7 +81,13 @@ python src/split_temporal.py
 # 6. 运行三分类基线原型（需要已生成 data/sample.csv）
 python src/prototype.py
 
-# 7. 运行自动化测试
+# 7. 时间划分基线重跑 + Bootstrap 置信区间（需要已生成 train/test.parquet，约 100 秒）
+python src/baseline_temporal.py
+
+# 8. 探索性数据分析（需要已生成 full_stats.json + complaints_slim.parquet，约 3 秒）
+python src/eda.py
+
+# 9. 运行自动化测试
 pytest -v
 ```
 
@@ -125,13 +135,45 @@ pytest -v
 
 `src/prototype.py` 会依次完成数据清洗（类别筛选、按 Complaint ID 去重、Product 旧命名合并、空值填充）、80/20 分层划分（随机种子 42），并实现两个基线——多数类基线与「Product × Issue 组合查表」基线——输出宏平均 F1、各类 precision/recall/F1 与混淆矩阵做对比。
 
+### 时间划分基线重跑（`src/baseline_temporal.py`）
+
+在 `data/train.parquet` / `data/test.parquet`（时间划分）上重跑阶段一的三个基线（多数类、Product × Issue 查表、Product × Issue × Company 查表），清洗规则复用 `src/cleaning.py`（parquet 已由 `split_temporal.py` 用同一份 `clean_data` 清洗后落盘）。输出格式与 `prototype.py` 完全一致（宏平均 F1、各类 precision/recall/F1、混淆矩阵），并新增：
+
+- **Bootstrap 置信区间**：测试集有放回抽样 1000 次（种子 42），取 2.5%/97.5% 分位。实现用多项分布抽样代替逐行重抽样——重抽样 N 个 (y_true, y_pred) 对后混淆矩阵各格子计数服从 Multinomial(N, p)，与逐行 Bootstrap 分布等价，但 1000 次迭代 < 0.1 秒（逐行需约 180 秒）。
+- **与阶段一对比**：时间划分 F1 与随机划分结果（0.2592 / 0.2679 / 0.5226）并排打印，标注下降幅度。
+
+| 基线 | 时间划分 F1 | Bootstrap 95% CI | 随机划分 F1 | 变化 |
+| --- | --- | --- | --- | --- |
+| 多数类 | 0.2496 | [0.2496, 0.2497] | 0.2592 | −3.69% |
+| Product × Issue 查表 | 0.3361 | [0.3352, 0.3369] | 0.2679 | +25.44% |
+| Product × Issue × Company 查表 | 0.4797 | [0.4786, 0.4807] | 0.5226 | −8.21% |
+
+内存峰值 1,390 MB（预算 4 GB），总用时约 98 秒。
+
+### 探索性数据分析（`src/eda.py`）
+
+基于 `data/full_stats.json`、`data/split_stats.json` 和 `data/cache/complaints_slim.parquet`，生成 6 张 PNG 图表（dpi=150，中文标题与坐标），每张图回答一个明确的业务问题，生成时附 2-3 句解读打印到终端。图表 5、6 使用双面板布局（上面板=投诉量条形，下面板=金钱救济率条形）避免双轴标签重叠。
+
+| 图 | 文件名 | 问题 | 关键发现 |
+| --- | --- | --- | --- |
+| 图 3 | `fig3_yearly_volume_relief.png` | 数据的时间漂移有多严重？ | 投诉量 2012→2025 增长 109 倍；金钱救济率从 13.2% 降至 0.48% |
+| 图 4 | `fig4_train_test_class.png` | 时间划分两侧的分布差异 | explanation −12.9pp、non-monetary +15.6pp、monetary −2.7pp |
+| 图 5 | `fig5_top_companies.png` | 头部公司的处理策略差异有多大？ | 征信三巨头占 77% 投诉但救济率≈0%；银行类 10%+ |
+| 图 6 | `fig6_product_relief.png` | 产品间差异 | 征信类占 80% 但救济率 0.05%；预付卡 23% |
+| 图 7 | `fig7_missing_rates.png` | 哪些字段不可用？ | narrative 76.94%、Tags 95.28%；核心建模特征 <0.4% |
+| 图 8 | `fig8_narrative_consent.png` | 文本字段未来是否可用？ | 2015 年才开放；峰值 47.5%（2017）；2025 年降至 22.5% |
+
+图 6 与图 8 用 DuckDB 直接查询 parquet 缓存（`read_parquet` + `GROUP BY`），分别做产品×目标交叉统计和按年叙述同意率。总用时约 2.5 秒。
+
 ### 测试
 
-`pytest` 共 29 个测试，分三个文件：
+`pytest` 共 54 个测试，分五个文件：
 
 - `tests/test_prototype.py`（10 个）：类别筛选、去重、Product 归一化、空值填充、划分比例与分层、随机种子可复现性、两个基线（含未见组合回退）、无效输入报错，以及在 10 行手工数据上与手工计算逐条核对；
 - `tests/test_aggregate_full.py`（6 个）：用 7 行迷你 CSV 跑通全量聚合流水线，核对行数口径、两种日期格式解析、分布计数、公司占比和为 1、缺失率与叙述非空、样本偏差计算；
-- `tests/test_split_temporal.py`（13 个）：划分边界不交叉（含 2023-12-31T23:59 归训练集、2024-01-01T00:00 归测试集）、日期全部落在正确区间、只留三主类、旧命名已归一化、同 ID 去重、空 State 填 Unknown、`split_temporal`/`prototype` 共用同一份 `cleaning.clean_data`（防实现漂移）、公司重叠率与年度金钱救济率的计算口径。
+- `tests/test_split_temporal.py`（13 个）：划分边界不交叉（含 2023-12-31T23:59 归训练集、2024-01-01T00:00 归测试集）、日期全部落在正确区间、只留三主类、旧命名已归一化、同 ID 去重、空 State 填 Unknown、`split_temporal`/`prototype` 共用同一份 `cleaning.clean_data`（防实现漂移）、公司重叠率与年度金钱救济率的计算口径；
+- `tests/test_baseline_temporal.py`（12 个）：`macro_f1_from_cm` 与 sklearn `f1_score` 完全一致（含 zero_division=0）、Bootstrap 区间覆盖率（合成数据上 200 次抽样验证 ~95% 覆盖）、随机种子可复现、多项分布 Bootstrap 与逐行重抽样等价、高效查表与 `prototype.baseline_lookup` 预测逐条一致（含平局打破、未见组合回退）、标签编码往返与未知类别报错；
+- `tests/test_eda.py`（13 个）：`truncate` 截断逻辑（短串不截、长串加 …、边界值与 Unicode）、`normalize_product_name` 与 `cleaning.PRODUCT_NORMALIZATION` 完全一致（大小写无关、未知名称原样返回）、归一化后聚合计数与金钱救济率计算正确（模拟 DuckDB 查询结果）、三主类顺序与 `cleaning.TARGET_CLASSES` 一致、`load_stats` 能正确加载 JSON。
 
 测试数据全部在测试文件内手工构造，**不依赖 `data/` 下的真实数据**，因此无需下载原始数据即可运行。
 
