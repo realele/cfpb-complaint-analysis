@@ -83,7 +83,7 @@
 | 2020 | 444,214 | 2025 | 5,443,045 |
 | 2021 | 495,938 | 2026（部分） | 3,588,338 |
 
-- **征信类占比激增**：征信类产品（归一化后）占有效行 80.75%（13,138,944 行），集中爆发于 2022 年后。三大征信局（TransUnion / Equifax / Experian）合计占 77.14%，且它们的处理策略高度一致——non-monetary relief 占 49%～59%，monetary relief 几乎为 0
+- **征信类占比激增**：征信类产品（归一化后）占有效行 80.75%（13,138,944 行），集中爆发于 2022 年后。三大征信局（TransUnion / Equifax / Experian）合计占 77.14%，但处理策略并不一致——前两家以 non-monetary relief 为主（TransUnion 58.8% / Equifax 49.2%），Experian 则以 explanation 结案为主（81.6%）；三家共同点是 monetary relief 均接近 0
 - **目标分布漂移**：三主类占比在时间划分两侧显著变化（取自 `split_stats.json`）：
 
   | 类别 | 训练集 | 测试集 | 变化 |
@@ -130,7 +130,7 @@
 ## 8. 维护与可复现性
 
 - **原始文件**：`data/complaints.csv`（需从 CFPB 官网下载，不入 Git）
-- **列式缓存**：`data/cache/complaints_slim.parquet`（DuckDB 生成，约 158 MB，全量 16,270,799 有效行）
+- **列式缓存**：`data/cache/complaints_slim.parquet`（DuckDB 生成，约 158 MB，全量 16,545,376 原始行（含无效行，过滤在 `split_temporal.py` 中完成））
 - **统计产物**：`data/full_stats.json`、`data/split_stats.json`、`data/baseline_temporal_stats.json`
 - **重跑命令**：`python src/aggregate_full.py`（全量统计）→ `python src/split_temporal.py`（时间划分）→ `python src/baseline_temporal.py`（基线 + Bootstrap）
 - **数据时效**：CFPB 每日更新数据库；本项目快照生成于 2026-11-07，最后记录日期 2026-07-03

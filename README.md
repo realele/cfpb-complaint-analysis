@@ -49,6 +49,7 @@ cfpb-complaint-analysis/
 │   ├── eda.py           # 探索性数据分析（6 张图回答 6 个问题，输出到 figures/）
 │   ├── report.py         # 终端表格对齐与数字格式化（供上面两个脚本共用）
 │   └── prototype.py      # 三分类基线原型（清洗 / 划分 / 多数类基线 / 查表基线 / 评估）
+├── docs/                 # 文档（数据字典、数据集卡片、决策日志、阶段二验收）
 ├── figures/              # EDA 图表（PNG，dpi=150）
 ├── tests/                # 测试
 ├── requirements.txt
@@ -56,6 +57,16 @@ cfpb-complaint-analysis/
 ```
 
 > 清洗逻辑只写在 `src/cleaning.py` 一处，`prototype.py`（样本基线）与 `split_temporal.py`（全量时间划分）都从它导入，避免两份实现各自漂移。
+
+## 文档索引
+
+| 文件 | 内容 |
+| --- | --- |
+| `docs/data_dictionary.md` | 数据字典：原始 CSV 全部 16 字段的类型、缺失率、角色与注意事项 |
+| `docs/dataset_card.md` | 数据集卡片：来源、许可、规模、覆盖总体、已知偏差、隐私与用途边界 |
+| `docs/decision_log.md` | 决策日志：阶段一 #1–#8、阶段二 #11–#20 的关键决策与理由 |
+| `docs/groupkfold_notes` | 阶段三预习笔记 —— GroupKFold（按公司分组交叉验证），作者为周恒毅、由赵伟翔代为提交（其 GitHub 账号处于封禁申诉期） |
+| `docs/verification_zhou.md` | 数据文档校对记录，独立环境复现记录。作者为周恒毅、由赵伟翔代为提交（其 GitHub 账号处于封禁申诉期） |
 
 ## 运行方法
 

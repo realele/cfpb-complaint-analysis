@@ -58,7 +58,7 @@
 - **缺失率**：0.0007%（121 行）
 - **项目角色**：**特征**。是分类任务中最强的预测维度之一（Product × Issue 查表基线宏平均 F1 = 0.3361）
 - **注意事项**：
-  - **历史命名需归一化**：CFPB 多次调整产品分类，历史数据里同一产品存在多个名称。`src/cleaning.py` 的 `PRODUCT_NORMALIZATION` 把 7 个旧名合并到现行名称上（详见 `split_stats.json` 的 `product_mapping`，影响行数合计约 268 万）。不合并会让模型学到"命名年份"这种伪模式（决策 #6）。归一化后由原始 23 类合并为 16 类
+  - **历史命名需归一化**：CFPB 多次调整产品分类，历史数据里同一产品存在多个名称。`src/cleaning.py` 的 `PRODUCT_NORMALIZATION` 把 7 个旧名合并到现行名称上（详见 `split_stats.json` 的 `product_mapping`，影响行数合计约 263 万（精确值 2,629,913））。不合并会让模型学到"命名年份"这种伪模式（决策 #6）。归一化后由原始 23 类合并为 16 类
   - **类别极不均衡**：征信类产品（"Credit reporting or other personal consumer reports" 及两个旧名合并后）占有效行 80.75%（10,834,750 + 2,163,768 + 140,426 = 13,138,944 行），其余十余类共占约 19%
 
 ### 3. Sub-product
@@ -111,7 +111,7 @@
 - **缺失率**：0.0000%（0 行）
 - **项目角色**：**特征**。是三分类里区分度最高的维度（Product × Issue × Company 查表基线宏平均 F1 = 0.4797，远高于前两者）
 - **注意事项**：
-  - **集中度极高**：前 3 名（TransUnion、Equifax、Experian，均为征信局）占有效行 77.14%（27.06% + 26.27% + 23.81%），这三家的处理策略高度一致——non-monetary relief 占比 49%～59%，monetary relief 几乎为 0（决策 #15）
+  - **集中度极高**：前 3 名（TransUnion、Equifax、Experian，均为征信局）占有效行 77.14%（27.06% + 26.27% + 23.81%），前两家以 non-monetary relief 为主（TransUnion 58.8% / Equifax 49.2%），Experian 则以 explanation 结案为主（81.6%），三家策略并不一致；但三家 monetary relief 均接近 0（TransUnion 0.014% / Equifax 0.001% / Experian 0.029%，决策 #15）
   - **公司记忆问题**：时间划分下测试集 99.85% 的行来自训练集已见过的公司，模型可能只是"查表"而非泛化。阶段三计划用 GroupKFold by Company 做对照（决策 #19）
   - 公司名称未做大小写归一化（CFPB 原文为大写），建模时建议作为 category 字典编码
 
@@ -175,7 +175,7 @@
     | Closed | 17,611 | 0.11% |
     | Closed with relief | 5,304 | 0.03% |
 
-  - **本项目只保留三个主类**（`cleaning.py` 的 `TARGET_CLASSES`）：`Closed with explanation` / `Closed with non-monetary relief` / `Closed with monetary relief`。其余 5 类（含 `In progress` 等）共 928,186 行被剔除
+  - **本项目只保留三个主类**（`cleaning.py` 的 `TARGET_CLASSES`）：`Closed with explanation` / `Closed with non-monetary relief` / `Closed with monetary relief`。其余 5 类（含 `In progress` 等）共 653,730 行，连同无目标值的行合计 928,186 行被剔除
   - 三主类在时间划分两侧**分布漂移严重**（取自 `split_stats.json`）：
 
     | 类别 | 训练集 | 测试集 |
