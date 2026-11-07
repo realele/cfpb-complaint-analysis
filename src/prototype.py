@@ -26,30 +26,25 @@ import pandas as pd
 from sklearn.metrics import classification_report, confusion_matrix, f1_score
 from sklearn.model_selection import train_test_split
 
+# 清洗逻辑（类别筛选 / 去重 / Product 归一化 / 空值填充）统一放在 cleaning.py，
+# 本文件与 split_temporal.py 共用同一份实现，避免两处规则漂移。
+# 这里把 require_* 以旧名字导入，保持本文件内部调用点不变。
+from cleaning import (  # noqa: E402  （脚本方式运行时 src/ 就是 sys.path[0]）
+    FEATURES,
+    REQUIRED_COLUMNS,
+    TARGET,
+    TARGET_CLASSES,
+    clean_data,
+    require_columns as _require_columns,
+    require_not_empty as _require_not_empty,
+)
+
 # --------------------------------------------------------------------------- #
 # 配置
 # --------------------------------------------------------------------------- #
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_INPUT = "data/sample.csv"
-
-TARGET = "Company response to consumer"
-
-# 三个目标类别（顺序即报告与混淆矩阵中的顺序）
-TARGET_CLASSES = [
-    "Closed with explanation",
-    "Closed with non-monetary relief",
-    "Closed with monetary relief",
-]
-
-# 用于分类的结构化特征
-FEATURES = ["Product", "Issue", "Company", "State", "Submitted via"]
-
-# 需要把空值填充为 "Unknown" 的列
-FILL_UNKNOWN_COLUMNS = ["State", "Submitted via"]
-
-# 数据清洗所必需的列
-REQUIRED_COLUMNS = ["Complaint ID", TARGET] + FEATURES
 
 # 混淆矩阵 / 报告中使用的类别简称
 SHORT_LABELS = {
@@ -60,60 +55,6 @@ SHORT_LABELS = {
 
 RANDOM_SEED = 42
 TEST_SIZE = 0.2
-
-# Product 旧命名归一化：{出现过的名称（小写）: (统一后的名称, 合并理由)}
-# CFPB 的产品分类经过多次调整，历史数据里同一产品存在多个名称，需归并后再建模。
-PRODUCT_NORMALIZATION = {
-    "credit reporting": (
-        "Credit reporting or other personal consumer reports",
-        "旧命名，即现在的征信类产品",
-    ),
-    "credit reporting, credit repair services, or other personal consumer reports": (
-        "Credit reporting or other personal consumer reports",
-        "旧命名（含 credit repair services）",
-    ),
-    "bank account or service": (
-        "Checking or savings account",
-        "旧命名，对应现在的活期/储蓄账户",
-    ),
-    "credit card or prepaid card": (
-        "Credit card",
-        "旧的「信用卡或预付卡」合并命名，主体为信用卡",
-    ),
-    "payday loan": (
-        "Payday loan, title loan, personal loan, or advance loan",
-        "旧命名，现在的短期贷款类产品",
-    ),
-    "payday loan, title loan, or personal loan": (
-        "Payday loan, title loan, personal loan, or advance loan",
-        "旧命名，现在的短期贷款类产品",
-    ),
-    "money transfers": (
-        "Money transfer, virtual currency, or money service",
-        "旧命名，现在的转账/货币服务类产品",
-    ),
-}
-
-
-# --------------------------------------------------------------------------- #
-# 校验辅助
-# --------------------------------------------------------------------------- #
-
-def _require_columns(df: pd.DataFrame, columns: list[str], where: str) -> None:
-    """缺少必需列时抛出清晰的错误。"""
-    missing = [c for c in columns if c not in df.columns]
-    if missing:
-        raise ValueError(
-            f"{where}：缺少必需列 {missing}；实际列名 = {list(df.columns)}"
-        )
-
-
-def _require_not_empty(df: pd.DataFrame, where: str) -> None:
-    """输入为空时抛出清晰的错误。"""
-    if df is None or not isinstance(df, pd.DataFrame):
-        raise TypeError(f"{where}：需要 pandas.DataFrame，实际收到 {type(df).__name__}")
-    if df.empty:
-        raise ValueError(f"{where}：输入 DataFrame 为空，无法继续")
 
 
 # --------------------------------------------------------------------------- #
@@ -136,86 +77,10 @@ def load_data(path: str | Path = DEFAULT_INPUT) -> pd.DataFrame:
 
 
 # --------------------------------------------------------------------------- #
-# 2. 清洗
+# 2. 清洗（实现在 cleaning.py，此处只做转发，保证与全量脚本用同一套规则）
 # --------------------------------------------------------------------------- #
 
-def _normalize_product(series: pd.Series) -> tuple[pd.Series, pd.DataFrame]:
-    """按 PRODUCT_NORMALIZATION 归并 Product 旧命名。
-
-    返回 (归一化后的列, 合并映射表)。映射表只包含本次数据中真实命中、
-    且名称确实发生变化的条目。
-    """
-    keys = series.astype(str).str.strip().str.lower()
-    mapped = keys.map({k: v[0] for k, v in PRODUCT_NORMALIZATION.items()})
-    normalized = mapped.where(mapped.notna(), series)
-
-    # 统计每条映射命中的行数，生成可打印的映射表
-    hit = normalized.ne(series) & mapped.notna()
-    mapping_columns = ["原名称", "归一化后", "影响行数", "合并理由"]
-    rows = []
-    for name in pd.unique(series[hit].astype(str)):
-        target, reason = PRODUCT_NORMALIZATION[name.strip().lower()]
-        rows.append({
-            "原名称": name,
-            "归一化后": target,
-            "影响行数": int((series.astype(str) == name).sum()),
-            "合并理由": reason,
-        })
-    # 没有任何旧命名命中时也要返回带列名的空表，否则后续按列名排序会报错
-    mapping = (
-        pd.DataFrame(rows, columns=mapping_columns)
-        .sort_values("影响行数", ascending=False)
-        .reset_index(drop=True)
-    )
-    return normalized, mapping
-
-
-def clean_data(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """清洗：只保留三个目标类别、按 Complaint ID 去重、归一化 Product、填充空值。
-
-    返回 (清洗后的 DataFrame, Product 合并映射表)。
-    """
-    _require_not_empty(df, "clean_data")
-    _require_columns(df, REQUIRED_COLUMNS, "clean_data")
-
-    out = df.copy()
-    n0 = len(out)
-
-    # --- 2.1 只保留三个目标类别 ---
-    dropped = out.loc[~out[TARGET].isin(TARGET_CLASSES), TARGET].value_counts()
-    out = out[out[TARGET].isin(TARGET_CLASSES)].copy()
-    print(f"  只保留三个目标类别：剔除 {n0 - len(out):,} 行")
-    for name, cnt in dropped.items():
-        print(f"      剔除 {name}: {cnt:,} 行")
-    if out.empty:
-        raise ValueError(
-            f"clean_data：筛选目标类别后没有剩余数据；"
-            f"请检查 {TARGET} 的取值是否包含 {TARGET_CLASSES}"
-        )
-
-    # --- 2.2 按 Complaint ID 去重 ---
-    before = len(out)
-    out = out.drop_duplicates(subset=["Complaint ID"], keep="first").reset_index(drop=True)
-    print(f"  按 Complaint ID 去重：删除 {before - len(out):,} 行重复记录")
-
-    # --- 2.3 Product 名称归一化 ---
-    n_categories_before = out["Product"].nunique()
-    normalized, mapping = _normalize_product(out["Product"])
-    out["Product"] = normalized
-    print(f"  Product 名称归一化：{len(mapping)} 条旧命名被合并，"
-          f"类别数 {n_categories_before} → {out['Product'].nunique()}")
-
-    # --- 2.4 空值填充 ---
-    for col in FILL_UNKNOWN_COLUMNS:
-        blank = out[col].isna() | (out[col].astype(str).str.strip() == "")
-        n_blank = int(blank.sum())
-        out[col] = out[col].astype(str).str.strip()
-        out.loc[blank, col] = "Unknown"
-        print(f"  {col} 空值填充为 \"Unknown\"：{n_blank:,} 行")
-
-    print(f"  清洗完成：{len(out):,} 行 × {out.shape[1]} 列")
-    return out, mapping
-
+# clean_data 由 cleaning.py 导入（见文件顶部），本文件不再保留自己的实现。
 
 # --------------------------------------------------------------------------- #
 # 3. 划分

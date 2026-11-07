@@ -48,11 +48,12 @@ import json
 import sys
 import threading
 import time
-import unicodedata
 from datetime import datetime, timezone
 from pathlib import Path
 
 import duckdb
+
+from report import fmt_gb, fmt_int, fmt_pct, print_table
 
 try:                      # 只是用来报告实测内存峰值，缺了不影响统计
     import psutil
@@ -113,47 +114,8 @@ MAX_TEMP_SIZE = "20GB"
 
 
 # --------------------------------------------------------------------------- #
-# 终端输出辅助（中英文混排按显示宽度对齐）
+# 内存峰值采样（表格打印与数字格式化见 report.py）
 # --------------------------------------------------------------------------- #
-
-def _disp_width(text: str) -> int:
-    """终端显示宽度：中日韩全角字符占 2 列。"""
-    return sum(2 if unicodedata.east_asian_width(ch) in "WF" else 1 for ch in text)
-
-
-def _pad(text: str, width: int, align: str = "l") -> str:
-    fill = " " * max(0, width - _disp_width(text))
-    return fill + text if align == "r" else text + fill
-
-
-def print_table(headers: list[str], rows: list[list[str]], aligns: str | None = None) -> None:
-    """打印定宽表格。aligns 是每个列的对齐方式串，如 "lrrr"。"""
-    if aligns is None:
-        aligns = "l" + "r" * (len(headers) - 1)
-    widths = []
-    for i, head in enumerate(headers):
-        width = _disp_width(str(head))
-        for row in rows:
-            width = max(width, _disp_width(str(row[i])))
-        widths.append(width)
-
-    print("  " + "  ".join(_pad(str(h), widths[i], aligns[i]) for i, h in enumerate(headers)))
-    print("  " + "-" * (sum(widths) + 2 * (len(widths) - 1)))
-    for row in rows:
-        print("  " + "  ".join(_pad(str(c), widths[i], aligns[i]) for i, c in enumerate(row)))
-
-
-def fmt_int(n: int | None) -> str:
-    return "-" if n is None else f"{n:,}"
-
-
-def fmt_pct(x: float | None, digits: int = 2) -> str:
-    return "-" if x is None else f"{x * 100:.{digits}f}%"
-
-
-def fmt_gb(n_bytes: int) -> str:
-    return f"{n_bytes / 1024 ** 3:.2f} GB"
-
 
 # 进程内存峰值（MB）：心跳线程与各阶段结束时各采样一次，用来看内存是否真的可控
 _PEAK_RSS_MB: float = 0.0

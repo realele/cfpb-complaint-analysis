@@ -34,16 +34,24 @@ cfpb-complaint-analysis/
 │   ├── complaints.csv    # 原始数据（约 8.4 GB，需自行下载）
 │   ├── sample.csv        # 由 src/sample_data.py 生成的样本（约 20 万行）
 │   ├── full_stats.json   # 由 src/aggregate_full.py 生成的全量聚合结果
+│   ├── train.parquet     # 时间划分：训练集（2011-12 ~ 2023-12-31）
+│   ├── test.parquet      # 时间划分：测试集（2024-01-01 ~ 至今）
+│   ├── split_stats.json  # 由 src/split_temporal.py 生成的划分统计
 │   └── cache/            # 全量聚合的 parquet 缓存与临时目录（可随时删除重建）
 ├── notebooks/            # 分析用 Jupyter Notebook
 ├── src/                  # 源代码
 │   ├── sample_data.py    # 分块读取 + 随机抽样，生成 data/sample.csv
 │   ├── aggregate_full.py # 全量聚合（DuckDB 单遍扫描 → data/full_stats.json）
+│   ├── cleaning.py       # 清洗规则的唯一实现（三主类筛选 / 去重 / Product 归一化 / 空值填充）
+│   ├── split_temporal.py # 时间划分（读 parquet 缓存 → data/train.parquet、test.parquet）
+│   ├── report.py         # 终端表格对齐与数字格式化（供上面两个脚本共用）
 │   └── prototype.py      # 三分类基线原型（清洗 / 划分 / 多数类基线 / 查表基线 / 评估）
 ├── tests/                # 测试
 ├── requirements.txt
 └── README.md
 ```
+
+> 清洗逻辑只写在 `src/cleaning.py` 一处，`prototype.py`（样本基线）与 `split_temporal.py`（全量时间划分）都从它导入，避免两份实现各自漂移。
 
 ## 运行方法
 
@@ -63,10 +71,13 @@ python src/sample_data.py
 python src/aggregate_full.py
 #    python src/aggregate_full.py --refresh    # 原始 CSV 变了才需要重建缓存
 
-# 5. 运行三分类基线原型（需要已生成 data/sample.csv）
+# 5. 时间划分，输出 data/train.parquet、data/test.parquet、data/split_stats.json（约 80 秒）
+python src/split_temporal.py
+
+# 6. 运行三分类基线原型（需要已生成 data/sample.csv）
 python src/prototype.py
 
-# 6. 运行自动化测试
+# 7. 运行自动化测试
 pytest -v
 ```
 
@@ -83,6 +94,25 @@ pytest -v
 
 主要结果：总行数 16,545,376，有效行 16,270,799（1.66% 无响应结果或无 Product）；三主类占有效行 60.98% / 33.70% / 1.30%；20 万行样本与全量的三主类占比最大偏差仅 **0.095 pp**，`Product` 前 10 最大偏差 **0.083 pp**。
 
+### 时间划分（`src/split_temporal.py`）
+
+阶段一的随机 80/20 有**时间泄漏**：同一家公司的历史投诉与未来投诉被分到两侧，模型等于提前知道这家公司往后会怎么处理。这里改成按 `Date received` 切：训练集 ≡ **2023-12-31 及以前**，测试集 ≡ **2024-01-01 及以后**，测试集在时间上完全晚于训练集。
+
+数据直接从 `data/cache/complaints_slim.parquet` 读（不再解析 8.4 GB CSV），清洗调用 `src/cleaning.py`（与 `prototype.py` 同一份实现），输出 `data/train.parquet`、`data/test.parquet`、`data/split_stats.json`。
+
+| 集合 | 时间范围 | 行数 | 占比 |
+| --- | --- | --- | --- |
+| 训练集 | 2011-12-01 ~ 2023-12-31 | 4,456,111 | 28.5% |
+| 测试集 | 2024-01-01 ~ 2026-07-03 | 11,160,958 | 71.5% |
+
+三点值得写进报告：
+
+1. **分布确实漂移了**：三主类占比 训练 72.74% / 23.96% / 3.29% → 测试 59.86% / 39.56% / 0.58%，即 explanation **−12.89 pp**、non-monetary **+15.60 pp**、monetary **−2.71 pp**。时间划分下这个漂移是真实存在的，不该当成 bug。
+2. **公司维度几乎没泛化压力**：测试集 3,962 家公司里 81.93% 在训练集出现过，且测试集 **99.85% 的行**来自训练集已见过的公司（投诉量前 10 的公司 10/10 都见过）。也就是说，时间划分消除了时间泄漏，但没消除"公司记忆"——想测真正的新公司泛化，还需要再做一版按公司分组的划分。
+3. **金钱救济率长期下滑**：13.21%（2012）→ 6.27%（2014）→ 2.92%（2020）→ 1.58%（2023）→ 0.87%（2024）→ 0.48%（2025/2026，2026 为部分年份）。同时 2022 年起 non-monetary 占比从 ~15% 跳到 40%+，与征信类投诉激增同步——这是三分类里 monetary 类只有 1% 量级的直接原因。完整逐年表在 `data/split_stats.json` 的 `yearly` 字段（终端也会打印同名表格，可直接用于 EDA 绘图）。
+
+内存方面两侧**依次**处理（训练集算完统计、写完盘即释放），并先把 Arrow 的字符串列转字典编码再落 pandas：否则 1600 万行的 object 列要 7 GB，转成 category 后只需约 1 GB，实测峰值约 3.1 GB。
+
 ### 三分类任务
 
 根据结构化特征 `Product, Issue, Company, State, Submitted via` 预测处理结果 `Company response to consumer`，只保留三个类别：
@@ -97,9 +127,13 @@ pytest -v
 
 ### 测试
 
-`tests/test_prototype.py` 使用 pytest，共 10 个测试，覆盖类别筛选、去重、Product 归一化、空值填充、划分比例与分层、随机种子可复现性、两个基线的行为（含未见组合回退）、无效输入的报错，以及在 10 行手工数据上与手工计算的逐条核对。
+`pytest` 共 29 个测试，分三个文件：
 
-测试数据全部在测试文件内构造，**不依赖 `data/sample.csv`**，因此无需先下载原始数据即可运行。
+- `tests/test_prototype.py`（10 个）：类别筛选、去重、Product 归一化、空值填充、划分比例与分层、随机种子可复现性、两个基线（含未见组合回退）、无效输入报错，以及在 10 行手工数据上与手工计算逐条核对；
+- `tests/test_aggregate_full.py`（6 个）：用 7 行迷你 CSV 跑通全量聚合流水线，核对行数口径、两种日期格式解析、分布计数、公司占比和为 1、缺失率与叙述非空、样本偏差计算；
+- `tests/test_split_temporal.py`（13 个）：划分边界不交叉（含 2023-12-31T23:59 归训练集、2024-01-01T00:00 归测试集）、日期全部落在正确区间、只留三主类、旧命名已归一化、同 ID 去重、空 State 填 Unknown、`split_temporal`/`prototype` 共用同一份 `cleaning.clean_data`（防实现漂移）、公司重叠率与年度金钱救济率的计算口径。
+
+测试数据全部在测试文件内手工构造，**不依赖 `data/` 下的真实数据**，因此无需下载原始数据即可运行。
 
 运行结束后会在 `data/sample.csv` 生成约 20 万行的随机样本，并在终端打印原始总行数、抽样行数、`Company response to consumer` 分布、`Product` 前 10 类分布以及 `Date received` 的时间范围。
 
