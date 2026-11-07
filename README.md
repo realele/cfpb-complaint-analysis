@@ -32,10 +32,13 @@
 cfpb-complaint-analysis/
 ├── data/                 # 数据目录（已加入 .gitignore，不入库）
 │   ├── complaints.csv    # 原始数据（约 8.4 GB，需自行下载）
-│   └── sample.csv        # 由 src/sample_data.py 生成的样本（约 20 万行）
+│   ├── sample.csv        # 由 src/sample_data.py 生成的样本（约 20 万行）
+│   ├── full_stats.json   # 由 src/aggregate_full.py 生成的全量聚合结果
+│   └── cache/            # 全量聚合的 parquet 缓存与临时目录（可随时删除重建）
 ├── notebooks/            # 分析用 Jupyter Notebook
 ├── src/                  # 源代码
 │   ├── sample_data.py    # 分块读取 + 随机抽样，生成 data/sample.csv
+│   ├── aggregate_full.py # 全量聚合（DuckDB 单遍扫描 → data/full_stats.json）
 │   └── prototype.py      # 三分类基线原型（清洗 / 划分 / 多数类基线 / 查表基线 / 评估）
 ├── tests/                # 测试
 ├── requirements.txt
@@ -56,12 +59,29 @@ pip install -r requirements.txt
 # 3. 在项目根目录执行，生成样本并查看统计报告
 python src/sample_data.py
 
-# 4. 运行三分类基线原型（需要已生成 data/sample.csv）
+# 4. 全量聚合，输出 data/full_stats.json（首次会建 parquet 缓存，约 75 秒；之后几秒）
+python src/aggregate_full.py
+#    python src/aggregate_full.py --refresh    # 原始 CSV 变了才需要重建缓存
+
+# 5. 运行三分类基线原型（需要已生成 data/sample.csv）
 python src/prototype.py
 
-# 5. 运行自动化测试
+# 6. 运行自动化测试
 pytest -v
 ```
+
+### 全量聚合（`src/aggregate_full.py`）
+
+对 8.4 GB 原始文件做一次全量扫描，输出 `data/full_stats.json`，包含：总行数 / 有效行数、目标变量 8 类分布、按年份投诉量、`Product` 全类分布、前 30 家公司及三主类占比、16 列缺失率、公开叙述（`Consumer complaint narrative` 非空）行数、`State` 前 15，以及**样本 vs 全量的占比偏差表**（绝对百分点），用于验收 20 万行样本的代表性。
+
+技术方案用 **DuckDB**（`duckdb==2.0.0`），理由：
+
+- 9 组不同维度的分组聚合，在 SQL 里各是一条 `GROUP BY`，比在 pandas 分块里维护多套累加器更好核对；
+- `memory_limit` 硬上限 + `temp_directory` 溢写，内存占用可控（实测峰值约 2.0 GB）；
+- **本文件的 `Consumer complaint narrative` 含换行，16,545,376 条记录在磁盘上摊成 27,656,645 个物理行**，DuckDB 的并行 CSV 读取器不支持这类文件（会直接报 `NotImplemented`），脚本因此显式 `parallel=false`，用单线程 RFC4180 解析器读取——实测 8.3 GB / 75 秒，之后所有聚合都跑在 0.15 GB 的 parquet 缓存上，仍为 20 线程并行（2.4 秒出全部结果）；
+- parquet 缓存可直接用于后续全量建模，不必再扫原始 CSV。
+
+主要结果：总行数 16,545,376，有效行 16,270,799（1.66% 无响应结果或无 Product）；三主类占有效行 60.98% / 33.70% / 1.30%；20 万行样本与全量的三主类占比最大偏差仅 **0.095 pp**，`Product` 前 10 最大偏差 **0.083 pp**。
 
 ### 三分类任务
 
